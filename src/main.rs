@@ -15,7 +15,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("wireplumber-widget: {error}");
+            eprintln!("wpwidget: {error}");
             ExitCode::FAILURE
         }
     }
@@ -84,7 +84,7 @@ fn run() -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "wireplumber-widget [popup|status|mute|volume up|down|PERCENT] [OPTIONS]\n\n\
+                    "wpwidget [popup|status|mute|volume up|down|PERCENT] [OPTIONS]\n\n\
                     popup      Toggle the audio device menu (default)\n\
                     status     Print one Waybar JSON status line\n\n\
                     mute       Toggle mute on the default output (or --kind input)\n\

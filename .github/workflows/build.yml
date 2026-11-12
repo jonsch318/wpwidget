@@ -81,28 +81,28 @@ jobs:
 
       - name: Smoke-test CLI
         run: |
-          target/release/wireplumber-widget --help
-          target/release/wireplumber-widget status --demo | \
+          target/release/wpwidget --help
+          target/release/wpwidget status --demo | \
             python3 -c 'import json,sys; data=json.load(sys.stdin); assert data["percentage"] == 65'
-          target/release/wireplumber-widget status --demo --kind input | \
+          target/release/wpwidget status --demo --kind input | \
             python3 -c 'import json,sys; data=json.load(sys.stdin); assert data["percentage"] == 80'
 
       - name: Package binary and configuration examples
         run: |
           mkdir -p dist/package
-          install -m755 target/release/wireplumber-widget dist/package/
+          install -m755 target/release/wpwidget dist/package/
           cp README.md dist/package/
           cp -r examples dist/package/
-          tar -C dist/package -czf dist/wireplumber-widget-linux-x86_64.tar.gz .
+          tar -C dist/package -czf dist/wpwidget-linux-x86_64.tar.gz .
           cd dist
-          sha256sum wireplumber-widget-linux-x86_64.tar.gz > wireplumber-widget-linux-x86_64.tar.gz.sha256
+          sha256sum wpwidget-linux-x86_64.tar.gz > wpwidget-linux-x86_64.tar.gz.sha256
 
       - name: Upload build
         uses: actions/upload-artifact@v7
         with:
-          name: wireplumber-widget-linux-x86_64
+          name: wpwidget-linux-x86_64
           path: |
-            dist/wireplumber-widget-linux-x86_64.tar.gz
-            dist/wireplumber-widget-linux-x86_64.tar.gz.sha256
+            dist/wpwidget-linux-x86_64.tar.gz
+            dist/wpwidget-linux-x86_64.tar.gz.sha256
           if-no-files-found: error
           retention-days: 14

@@ -751,7 +751,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wireplumber-widget"
+name = "wpwidget"
 version = "0.1.0"
 dependencies = [
  "gtk4",

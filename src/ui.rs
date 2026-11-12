@@ -337,9 +337,9 @@ pub fn run(options: Options) -> Result<(), String> {
     // GTK arguments are parsed above; only pass the executable name to GApplication.
     let app = gtk::Application::builder()
         .application_id(if options.demo {
-            "io.github.wireplumberwidget.Demo"
+            "io.github.wpwidget.Demo"
         } else {
-            "io.github.wireplumberwidget.Audio"
+            "io.github.wpwidget.Audio"
         })
         .build();
     app.connect_activate(move |app| {
@@ -349,7 +349,7 @@ pub fn run(options: Options) -> Result<(), String> {
             build(app, &options);
         }
     });
-    let code = app.run_with_args(&["wireplumber-widget"]);
+    let code = app.run_with_args(&["wpwidget"]);
     if code == glib::ExitCode::SUCCESS {
         Ok(())
     } else {
@@ -391,7 +391,7 @@ fn build(app: &gtk::Application, options: &Options) {
 
     if gtk4_layer_shell::is_supported() {
         window.init_layer_shell();
-        window.set_namespace(Some("wireplumber-widget"));
+        window.set_namespace(Some("wpwidget"));
         window.set_layer(Layer::Overlay);
         window.set_keyboard_mode(KeyboardMode::OnDemand);
         window.set_exclusive_zone(0);

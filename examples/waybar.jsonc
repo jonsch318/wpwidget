@@ -1,10 +1,10 @@
 // Merge this module into ~/.config/waybar/config.jsonc and add
-// "custom/audio-devices" to your existing modules-right (or another module list).
+// "custom/wpwidget" to your existing modules-right (or another module list).
 // Remove the built-in "wireplumber" entry to avoid duplicate audio controls.
 {
-  "modules-right": ["custom/audio-devices"],
-  "custom/audio-devices": {
-    "exec": "$HOME/.local/bin/wireplumber-widget status",
+  "modules-right": ["custom/wpwidget"],
+  "custom/wpwidget": {
+    "exec": "$HOME/.local/bin/wpwidget status",
     "return-type": "json",
     "escape": true,
     "interval": 1,
@@ -21,11 +21,11 @@
       "default": [" ", " ", " "]
     },
     "tooltip": true,
-    "on-click": "$HOME/.local/bin/wireplumber-widget popup",
-    "on-click-right": "$HOME/.local/bin/wireplumber-widget mute",
-    "on-click-middle": "$HOME/.local/bin/wireplumber-widget mute --kind input",
-    "on-scroll-up": "$HOME/.local/bin/wireplumber-widget volume up --step 5",
-    "on-scroll-down": "$HOME/.local/bin/wireplumber-widget volume down --step 5",
+    "on-click": "$HOME/.local/bin/wpwidget popup",
+    "on-click-right": "$HOME/.local/bin/wpwidget mute",
+    "on-click-middle": "$HOME/.local/bin/wpwidget mute --kind input",
+    "on-scroll-up": "$HOME/.local/bin/wpwidget volume up --step 5",
+    "on-scroll-down": "$HOME/.local/bin/wpwidget volume down --step 5",
     "smooth-scrolling-threshold": 1,
     "exec-on-event": false
   }

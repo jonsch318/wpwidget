@@ -1,72 +1,75 @@
-# WirePlumber Widget
+# wpwidget - WirePlumber Widget
 
-A small Rust + GTK4 audio switcher for Waybar, styled after GNOME's quick settings.
-Click the bar module to open a rounded dark panel with separate **Sound Output**
-and **Sound Input** sections. Click a device to make it the default; a blue row
-and checkmark show the active selection. The menu stays open so you can change
-both sections. Escape, the close button, or another click on the module closes it.
-Each section has a compact volume slider and an icon button to mute/unmute its
-current default device. Output and microphone levels are independent. Sliders
-adjust from 0–100% and preserve the mute state; click the icon to unmute.
-While switching, only the clicked row shows a spinner; it fades to a checkmark
-when WirePlumber confirms the change. Other device icons remain unchanged.
+I used to use the wireplumber module of waybar but then switching between audio sinks is a hassle because of the wpctl cli and changing ids e.g. `wpctl set-default 54`.
+So i asked the nice little daemon in my computer to build a small gtk widget to help me
 
-The device list refreshes every two seconds, including USB/Bluetooth hotplug and
-defaults changed by other applications. Audio queries run off the GTK thread.
-The bar displays the volume with device/volume icons, Bluetooth and mute states,
-with both defaults and levels in its tooltip. It replaces the built-in Waybar
-WirePlumber module while adding the device picker and microphone controls.
+## Runtime Requirements
 
-## Requirements
-
-- Rust/Cargo (edition 2024 compatible), a C compiler, and `pkg-config`.
-- GTK4 development libraries and gtk4-layer-shell development libraries.
+- Linux with GTK4 and GTK4 layer-shell (1.0 or newer) runtime libraries.
 - PipeWire (`pw-dump`) and WirePlumber (`wpctl`), running in your user session.
-- Waybar and a Wayland compositor supporting layer-shell, such as Sway, Hyprland,
-  or Niri. A session D-Bus is needed for the single-instance menu toggle.
-- A symbolic icon theme such as Adwaita.
+- A desktop session with D-Bus for the single-instance menu toggle.
+- Waybar for bar integration. A Wayland compositor supporting layer-shell, such
+  as Sway, Hyprland, or Niri, enables corner positioning; other desktops use a
+  normal window.
+- A symbolic icon theme such as Adwaita for the popup. The example Waybar config
+  also uses Nerd Font icons; install a matching font or customize `format-icons`.
 
-On Arch Linux the native packages are `gtk4 gtk4-layer-shell pipewire wireplumber
-waybar adwaita-icon-theme base-devel rust`. On Debian/Ubuntu with GTK4 layer-shell
-available, the development packages are `libgtk-4-dev libgtk4-layer-shell-dev`,
-alongside `build-essential pkg-config cargo pipewire-bin wireplumber waybar
-adwaita-icon-theme`.
+On Arch Linux, install `gtk4 gtk4-layer-shell pipewire wireplumber waybar
+adwaita-icon-theme`. Prebuilt binaries do not require Rust or development tools;
+see [GitHub Actions builds](#github-actions-builds) for artifact compatibility.
 
-## Build and install
+AI Giberish:
 
-```sh
-cargo build --release
-install -Dm755 target/release/wireplumber-widget ~/.local/bin/wireplumber-widget
-```
 
-Installation is manual; building does not modify your Waybar configuration.
+A GNOME-style GTK4 audio menu for Waybar, with separate output and input device
+lists, volume sliders, and mute buttons. Selected devices are highlighted;
+switching shows a spinner. Device lists and levels refresh automatically.
 
 ## GitHub Actions builds
 
-[`.github/workflows/build.yml`](.github/workflows/build.yml) runs on pushes, pull
-requests, and manual dispatches. It checks formatting and Clippy, runs all tests
-(including GTK controls under Xvfb), and builds an optimized Linux x86_64 binary.
-The runner builds the native GTK4 layer-shell library at version 1.3.0.
+1. Open the repository's **Actions → Build** and choose a successful run.
+2. Download `wpwidget-linux-x86_64` under **Artifacts** and unzip it.
+3. Extract and install the included binary:
 
-Download `wireplumber-widget-linux-x86_64` from a successful run's **Artifacts**.
-Extract the included `.tar.gz` to preserve executable permissions; it contains the
-binary, this README, and Waybar examples. A SHA-256 checksum is included.
-The binary needs GTK4 and GTK4 layer-shell runtime libraries on the target system,
-plus PipeWire and WirePlumber; it is not statically linked. Builds use Ubuntu
-24.04, so the target needs a compatible glibc (2.39 or newer).
+```sh
+tar -xzf wpwidget-linux-x86_64.tar.gz
+install -Dm755 wpwidget ~/.local/bin/wpwidget
+```
+
+The archive includes Waybar examples and a README; a SHA-256 checksum accompanies
+it. The binary requires the runtime dependencies above and glibc 2.39 or newer
+(Ubuntu 24.04 compatible). Rust is only needed when building from source.
+
+## Build Requirements
+
+- Current stable Rust/Cargo with edition 2024 support.
+- A C compiler/linker, `pkg-config`, and GTK4 and GTK4 layer-shell (≥1.0)
+  development libraries. GTK3 layer-shell is a different library.
+- `rustfmt` and Clippy for development checks.
+
+Arch Linux: `base-devel rust gtk4 gtk4-layer-shell`.
+Debian/Ubuntu: `build-essential pkg-config libgtk-4-dev
+libgtk4-layer-shell-dev` where available, plus a current Rust toolchain.
+If GTK4 layer-shell is unavailable, see the
+[workflow's source-build steps](.github/workflows/build.yml) using Meson, Ninja,
+Wayland development libraries, and `wayland-protocols`.
+
+## Build and install
+
+Run from the repository root:
+
+```sh
+cargo build --release --locked
+install -Dm755 target/release/wpwidget ~/.local/bin/wpwidget
+```
 
 ## Waybar setup
 
-Merge [examples/waybar.jsonc](examples/waybar.jsonc) into your Waybar config
-(usually `~/.config/waybar/config.jsonc`). Add `custom/audio-devices` to your
-existing `modules-right`, `modules-left`, or `modules-center` array. Append
-[examples/waybar.css](examples/waybar.css) to your Waybar stylesheet, then restart
-Waybar using your usual session/compositor launcher.
-Remove `wireplumber` from the module list to avoid duplicate controls.
-
-The example uses `~/.local/bin/wireplumber-widget`; adjust both commands if you
-install elsewhere. The example uses the same Nerd Font icons as your existing
-WirePlumber configuration; install a Nerd Font or change `format-icons`.
+- Merge [examples/waybar.jsonc](examples/waybar.jsonc) into
+  `~/.config/waybar/config.jsonc`.
+- Replace `wireplumber` with `custom/wpwidget` in your module list.
+- Append [examples/waybar.css](examples/waybar.css) to your Waybar stylesheet
+  and restart Waybar. Adjust command paths if installed elsewhere.
 
 | Bar action | Control |
 | --- | --- |
@@ -75,73 +78,58 @@ WirePlumber configuration; install a Nerd Font or change `format-icons`.
 | Middle click | Toggle microphone mute |
 | Scroll up/down | Output volume ±5% |
 
-`format-icons` supports the existing `headphone`, `hands-free`, `headset`, `phone`,
-`portable`, `car`, and `default` definitions, plus `muted` and `unavailable`.
-The default array chooses low/medium/high icons by volume. Device form factors
-come from PipeWire device properties. Bluetooth adds the existing `` suffix.
-CSS classes include `muted`, `bluetooth`, `source-muted` (microphone muted),
-`connected`, `disconnected`, and the device form factor. Reuse existing Waybar
-styles by changing their selector from `#wireplumber` to `#custom-audio-devices`.
+Each menu section has a 0–100% slider; click its icon to mute/unmute. Moving a
+slider preserves mute. Escape or the close button also closes the menu.
 
-This is a custom module, so `format` uses `{icon}` and `{text}` (the volume),
-instead of the built-in module's `{volume}`. Use `--step 5` in scroll commands
-instead of `scroll-step`. Muted/Bluetooth formatting is provided by status JSON;
-the built-in `format-muted` and `format-bluetooth` keys do not apply to custom
-modules. [examples/waybar.jsonc](examples/waybar.jsonc) is a complete translation.
+The example keeps the existing device and volume `format-icons`, plus `muted`
+and `unavailable`. Custom modules use `{icon}` and `{text}` instead of `{volume}`,
+and `--step 5` in scroll commands instead of `scroll-step`. Built-in
+`format-muted`/`format-bluetooth` keys do not apply; status JSON handles these
+states. CSS classes include `muted`, `bluetooth`, `source-muted`, `connected`,
+`disconnected`, and the device form factor. Change existing `#wireplumber`
+selectors to `#custom-wpwidget` to reuse your styles.
 
-For a separate microphone display with its own mute and scroll controls, merge
+For a separate microphone module, merge
 [examples/waybar-input.jsonc](examples/waybar-input.jsonc) and add
-`custom/audio-input` to your module list. Both modules open the same menu.
+`custom/wpwidget-input` to your module list.
 
-The menu defaults to the top-right corner, inset 12 pixels beyond the compositor's
-reserved bar area. For a bottom bar, change `on-click` to:
+The menu defaults to the top-right corner. For a bottom bar, change `on-click` to:
 
 ```sh
-$HOME/.local/bin/wireplumber-widget popup --position bottom-right --margin 12
+$HOME/.local/bin/wpwidget popup --position bottom-right --margin 12
 ```
 
-Positions: `top-right`, `top-left`, `bottom-right`, `bottom-left`. On compositors
-without layer-shell (including GNOME Shell), the menu opens as a normal window;
-corner positioning is only available with layer-shell. This is a GNOME-style
-widget, not a GNOME Shell extension.
+Supported corners: `top-right`, `top-left`, `bottom-right`, `bottom-left`.
+Positioning requires layer-shell; other desktops open a normal window.
 
-## Preview and development
+## Development
 
 ```sh
-cargo run -- popup --demo     # Interactive sample devices; leaves audio unchanged
-cargo run -- status --demo    # Example Waybar JSON without an audio server
-cargo run -- popup            # Real devices; selecting one changes its default
-cargo run -- status           # One JSON line for Waybar
-cargo run -- status --kind input # Microphone status
-cargo run -- volume up --step 5  # Raise output volume, capped at 100%
-cargo run -- volume 40 --kind input # Set microphone volume to 40%
+cargo run -- popup --demo        # Preview without changing system audio
+cargo run -- status --demo       # Sample Waybar JSON
+cargo run -- volume 40 --kind input # Set microphone volume
 cargo run -- mute --kind input   # Toggle microphone mute
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
-cargo test -- --ignored --test-threads=1  # GTK regression test; needs a display
+cargo test -- --ignored --test-threads=1 # GTK test; requires a display
 ```
 
-The demo menu has its own application ID, so it can run alongside the real menu.
-GTK styling is embedded from `src/style.css`; rebuild after changing it.
+Rebuild after editing the embedded popup stylesheet, `src/style.css`.
+[CI](.github/workflows/build.yml) runs all checks, including GTK tests under Xvfb,
+and uploads an optimized binary on pushes, pull requests, and manual dispatches.
 
-## How switching works
+## Troubleshooting
 
-`pw-dump` supplies structured device data and effective default metadata.
-`wpctl set-default ID` selects the output or input independently. Stable node
-names are resolved immediately before switching to handle device reconnections.
-`wpctl get-volume`, `set-volume`, and `set-mute` read and control levels. Slider
-updates are coalesced while the worker is busy so dragging does not build a queue
-of stale volume changes. External changes appear on the next refresh.
-WirePlumber controls persistence and routing policy. New streams use the chosen
-default; existing applications may retain an explicitly selected device or need
-playback restarted. This tool does not force-move application streams, change
-card profiles, pair Bluetooth devices, or expose disconnected hardware.
+If the module shows **Unavailable**, run `pw-dump` and `wpctl status` in your
+desktop terminal. Run the widget as your desktop user in the same session as
+Waybar, without `sudo`.
 
-If the module shows **Unavailable**, click it for the error or run `pw-dump` and
-`wpctl status` from your desktop terminal. Run the widget as your desktop user,
-with the same session environment as Waybar. No `sudo` is needed.
+Switching uses `wpctl set-default`; WirePlumber controls persistence and routing.
+New streams use the selected default, while applications with an explicit device
+may need playback restarted. Card profiles and Bluetooth pairing are managed
+outside this widget.
 
 References: [Waybar custom modules](https://github.com/Alexays/Waybar/wiki/Module:-Custom),
 [wpctl](https://pipewire.pages.freedesktop.org/wireplumber/man/wpctl.html),
-and [GTK4 layer-shell](https://github.com/wmww/gtk4-layer-shell).
+[GTK4 layer-shell](https://github.com/wmww/gtk4-layer-shell).
