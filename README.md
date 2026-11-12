@@ -3,6 +3,10 @@
 I used to use the wireplumber module of waybar but then switching between audio sinks is a hassle because of the wpctl cli and changing ids e.g. `wpctl set-default 54`.
 So i asked the nice little daemon in my computer to build a small gtk widget to help me
 
+<p align="center">
+  <img src="./assets/screenshot.png" alt="Screenshot of wpwidget">
+</p>
+
 ## Runtime Requirements
 
 - Linux with GTK4 and GTK4 layer-shell (1.0 or newer) runtime libraries.
