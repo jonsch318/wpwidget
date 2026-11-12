@@ -1,11 +1,15 @@
 /* Append to ~/.config/waybar/style.css. Popup styling is embedded in the binary. */
-#custom-audio-devices {
-    background: #353539;
-    color: #fafafa;
-    border-radius: 16px;
-    padding: 0 12px;
-    margin: 4px;
+#custom-audio-devices,
+#custom-audio-input {
+    padding: 0 10px;
+    background-color: #27272a;
+    color: #f4f4f5;
+    border-radius: 9999px;
+    margin: 0;
 }
-#custom-audio-devices:hover { background: #46464c; }
+#custom-audio-devices.muted,
+#custom-audio-input.muted { background-color: #458588; }
 #custom-audio-devices.error,
-#custom-audio-devices.disconnected { color: #f8c784; }
+#custom-audio-devices.disconnected,
+#custom-audio-input.error,
+#custom-audio-input.disconnected { color: #f8c784; }

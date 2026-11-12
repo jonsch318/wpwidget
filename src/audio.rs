@@ -10,6 +10,19 @@ pub struct Device {
     pub name: String,
     pub label: String,
     pub kind: Kind,
+    pub form_factor: String,
+    pub bluetooth: bool,
+}
+
+impl Device {
+    pub fn icon(&self) -> &'static str {
+        match (self.kind, self.form_factor.as_str()) {
+            (Kind::Input, _) => "audio-input-microphone-symbolic",
+            (_, "headphone") => "audio-headphones-symbolic",
+            (_, "headset" | "hands-free") => "audio-headset-symbolic",
+            _ => "audio-speakers-symbolic",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +32,20 @@ pub enum Kind {
 }
 
 impl Kind {
+    pub fn default_id(self) -> &'static str {
+        match self {
+            Self::Output => "@DEFAULT_AUDIO_SINK@",
+            Self::Input => "@DEFAULT_AUDIO_SOURCE@",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        match self {
+            Self::Output => 0,
+            Self::Input => 1,
+        }
+    }
+
     fn key(self) -> &'static str {
         match self {
             Self::Output => "default.audio.sink",
@@ -27,14 +54,62 @@ impl Kind {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Volume {
+    pub percent: u32,
+    pub muted: bool,
+}
+
+pub fn parse_volume(text: &str) -> Result<Volume, String> {
+    let mut parts = text.split_whitespace();
+    if parts.next() != Some("Volume:") {
+        return Err(format!("Unexpected wpctl volume response: {text}"));
+    }
+    let level: f64 = parts
+        .next()
+        .and_then(|part| part.parse().ok())
+        .filter(|level: &f64| level.is_finite() && *level >= 0.0)
+        .ok_or_else(|| format!("Invalid volume response: {text}"))?;
+    Ok(Volume {
+        percent: (level * 100.0).round() as u32,
+        muted: parts.any(|part| part == "[MUTED]"),
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VolumeChange {
+    Set(u32),
+    Up(u32),
+    Down(u32),
+}
+
+impl VolumeChange {
+    pub fn argument(self) -> Result<String, String> {
+        let (value, suffix) = match self {
+            Self::Set(value) => (value, ""),
+            Self::Up(value) => (value, "+"),
+            Self::Down(value) => (value, "-"),
+        };
+        if value > 100 {
+            return Err("Volume must be between 0 and 100 percent".into());
+        }
+        Ok(format!("{value}%{suffix}"))
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Snapshot {
     pub devices: Vec<Device>,
     pub output: Option<String>,
     pub input: Option<String>,
+    pub volumes: [Option<Volume>; 2],
 }
 
 impl Snapshot {
+    pub fn volume(&self, kind: Kind) -> Option<Volume> {
+        self.volumes[kind.index()]
+    }
+
     pub fn default_device(&self, kind: Kind) -> Option<&Device> {
         let name = match kind {
             Kind::Output => self.output.as_deref(),
@@ -55,7 +130,7 @@ pub fn parse_snapshot(data: &str) -> Result<Snapshot, String> {
     let objects: Vec<Value> = serde_json::from_str(data)
         .map_err(|err| format!("Could not read PipeWire device data: {err}"))?;
     let mut snapshot = Snapshot::default();
-    for object in objects {
+    for object in &objects {
         let props = &object["info"]["props"];
         if object["type"] == "PipeWire:Interface:Node" {
             let kind = match props["media.class"].as_str() {
@@ -72,11 +147,29 @@ pub fn parse_snapshot(data: &str) -> Result<Snapshot, String> {
                 .filter_map(|key| props[key].as_str())
                 .find(|label| !label.is_empty())
                 .unwrap_or(name);
+            let parent_id = props["device.id"]
+                .as_u64()
+                .or_else(|| props["device.id"].as_str().and_then(|id| id.parse().ok()));
+            let parent = objects.iter().find(|candidate| {
+                candidate["type"] == "PipeWire:Interface:Device"
+                    && candidate["id"].as_u64() == parent_id
+            });
+            let parent_props = parent.map(|parent| &parent["info"]["props"]);
+            let property = |key: &str| {
+                props[key]
+                    .as_str()
+                    .or_else(|| parent_props.and_then(|props| props[key].as_str()))
+            };
             snapshot.devices.push(Device {
                 id,
                 name: name.to_owned(),
                 label: label.to_owned(),
                 kind,
+                form_factor: property("device.form-factor")
+                    .unwrap_or("default")
+                    .to_owned(),
+                bluetooth: property("device.api").is_some_and(|api| api.starts_with("bluez"))
+                    || name.starts_with("bluez_"),
             });
         }
         if object["type"] == "PipeWire:Interface:Metadata"
@@ -155,13 +248,77 @@ fn command(program: &str, args: &[&str]) -> Result<String, String> {
 }
 
 pub fn snapshot() -> Result<Snapshot, String> {
+    let mut result = graph_snapshot()?;
+    for kind in [Kind::Output, Kind::Input] {
+        if let Some(device) = result.default_device(kind) {
+            result.volumes[kind.index()] = Some(parse_volume(&command(
+                "wpctl",
+                &["get-volume", &device.id.to_string()],
+            )?)?);
+        }
+    }
+    Ok(result)
+}
+
+fn graph_snapshot() -> Result<Snapshot, String> {
     parse_snapshot(&command("pw-dump", &["--no-colors"])?)
 }
 
 pub fn set_default(device: &Device) -> Result<Snapshot, String> {
-    set_default_with(device, snapshot, |id| {
+    set_default_with(device, graph_snapshot, |id| {
         command("wpctl", &["set-default", &id.to_string()]).map(|_| ())
-    })
+    })?;
+    snapshot()
+}
+
+fn resolve(device: &Device) -> Result<u64, String> {
+    graph_snapshot()?
+        .devices
+        .iter()
+        .find(|candidate| candidate.name == device.name && candidate.kind == device.kind)
+        .map(|candidate| candidate.id)
+        .ok_or_else(|| "This device was disconnected. Choose another device.".into())
+}
+
+pub fn set_volume(device: &Device, percent: u32) -> Result<Snapshot, String> {
+    let argument = VolumeChange::Set(percent).argument()?;
+    command(
+        "wpctl",
+        &[
+            "set-volume",
+            &resolve(device)?.to_string(),
+            &argument,
+            "--limit",
+            "1.0",
+        ],
+    )?;
+    snapshot()
+}
+
+pub fn toggle_mute(device: &Device) -> Result<Snapshot, String> {
+    command(
+        "wpctl",
+        &["set-mute", &resolve(device)?.to_string(), "toggle"],
+    )?;
+    snapshot()
+}
+
+pub fn change_default_volume(kind: Kind, change: VolumeChange) -> Result<(), String> {
+    command(
+        "wpctl",
+        &[
+            "set-volume",
+            kind.default_id(),
+            &change.argument()?,
+            "--limit",
+            "1.0",
+        ],
+    )
+    .map(|_| ())
+}
+
+pub fn toggle_default_mute(kind: Kind) -> Result<(), String> {
+    command("wpctl", &["set-mute", kind.default_id(), "toggle"]).map(|_| ())
 }
 
 fn set_default_with(
@@ -194,24 +351,56 @@ fn set_default_with(
     ))
 }
 
-pub fn waybar(snapshot: &Snapshot) -> Value {
+pub fn waybar(snapshot: &Snapshot, kind: Kind) -> Value {
     let output = snapshot.default_device(Kind::Output);
     let input = snapshot.default_device(Kind::Input);
-    let label = output.map_or("No output", |device| device.label.as_str());
-    let short: String = label.chars().take(32).collect();
-    let short = if label.chars().count() > 32 {
-        format!("{short}…")
+    let device = snapshot.default_device(kind);
+    let volume = snapshot.volume(kind);
+    let muted = volume.is_some_and(|volume| volume.muted);
+    let bluetooth = device.is_some_and(|device| device.bluetooth);
+    let form = device.map_or("default", |device| device.form_factor.as_str());
+    let mut classes = vec![if device.is_some() {
+        "connected"
     } else {
-        short
+        "disconnected"
+    }];
+    if muted {
+        classes.push("muted");
+    }
+    if bluetooth {
+        classes.push("bluetooth");
+    }
+    classes.push(form);
+    if snapshot
+        .volume(Kind::Input)
+        .is_some_and(|volume| volume.muted)
+    {
+        classes.push("source-muted");
+    }
+    let describe = |device: Option<&Device>, kind| {
+        device.map_or("Not connected".into(), |device| {
+            let volume = snapshot.volume(kind).map_or(String::new(), |v| {
+                format!(" — {}%{}", v.percent, if v.muted { " (muted)" } else { "" })
+            });
+            format!("{}{volume}", device.label)
+        })
+    };
+    let text = if device.is_none() {
+        "Unavailable".into()
+    } else if muted {
+        String::new()
+    } else {
+        volume.map_or("—".into(), |v| format!("{}%", v.percent))
     };
     json!({
-        "text": format!("♪ {short}"),
+        "text": format!("{text}{}", if bluetooth { " " } else { "" }),
         "tooltip": gtk::glib::markup_escape_text(&format!(
-            "Output: {label}\nInput: {}\n\nClick to switch audio devices",
-            input.map_or("No input", |device| device.label.as_str())
+            "Output: {}\nInput: {}\n\nClick for audio controls",
+            describe(output, Kind::Output), describe(input, Kind::Input)
         )).as_str(),
-        "class": if output.is_some() { "connected" } else { "disconnected" },
-        "alt": "audio"
+        "class": classes,
+        "alt": if device.is_none() { "unavailable" } else if muted { "muted" } else { form },
+        "percentage": volume.map_or(0, |volume| volume.percent.min(100))
     })
 }
 
@@ -223,34 +412,54 @@ pub fn demo_snapshot() -> Snapshot {
                 name: "speakers".into(),
                 label: "Built-in Speakers".into(),
                 kind: Kind::Output,
+                form_factor: "default".into(),
+                bluetooth: false,
             },
             Device {
                 id: 2,
                 name: "headphones".into(),
                 label: "Studio Headphones".into(),
                 kind: Kind::Output,
+                form_factor: "headphone".into(),
+                bluetooth: false,
             },
             Device {
                 id: 3,
                 name: "display".into(),
                 label: "HDMI / DisplayPort".into(),
                 kind: Kind::Output,
+                form_factor: "default".into(),
+                bluetooth: false,
             },
             Device {
                 id: 4,
                 name: "microphone".into(),
                 label: "Built-in Microphone".into(),
                 kind: Kind::Input,
+                form_factor: "default".into(),
+                bluetooth: false,
             },
             Device {
                 id: 5,
                 name: "usb-mic".into(),
                 label: "USB Microphone".into(),
                 kind: Kind::Input,
+                form_factor: "default".into(),
+                bluetooth: false,
             },
         ],
         output: Some("headphones".into()),
         input: Some("microphone".into()),
+        volumes: [
+            Some(Volume {
+                percent: 65,
+                muted: false,
+            }),
+            Some(Volume {
+                percent: 80,
+                muted: false,
+            }),
+        ],
     }
 }
 
@@ -333,7 +542,12 @@ mod tests {
         ]"#).unwrap();
         assert!(snapshot.devices.is_empty());
         assert!(snapshot.default_device(Kind::Output).is_none());
-        assert_eq!(waybar(&snapshot)["class"], "disconnected");
+        assert!(
+            waybar(&snapshot, Kind::Output)["class"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("disconnected"))
+        );
     }
 
     #[test]
@@ -344,25 +558,102 @@ mod tests {
     }
 
     #[test]
-    fn waybar_escapes_markup_and_handles_unicode_names() {
+    fn waybar_escapes_markup_and_reports_volume_and_mute() {
         let mut snapshot = parse_snapshot(include_str!("../tests/graph.json")).unwrap();
-        let payload = waybar(&snapshot);
+        snapshot.volumes = [
+            Some(Volume {
+                percent: 65,
+                muted: false,
+            }),
+            Some(Volume {
+                percent: 80,
+                muted: true,
+            }),
+        ];
+        let payload = waybar(&snapshot, Kind::Output);
         assert!(
             payload["tooltip"]
                 .as_str()
                 .unwrap()
                 .contains("&amp; DAC &lt;USB&gt;")
         );
+        assert_eq!(payload["text"], "65%");
+        assert_eq!(payload["percentage"], 65);
+        assert_eq!(payload["alt"], "headphone");
         assert!(
-            payload["text"]
-                .as_str()
+            payload["class"]
+                .as_array()
                 .unwrap()
-                .contains("Headphones & DAC <USB>")
+                .contains(&json!("source-muted"))
         );
-        snapshot
-            .devices
-            .iter_mut()
-            .for_each(|device| device.label = "🎧".repeat(50));
-        assert!(waybar(&snapshot)["text"].as_str().unwrap().ends_with('…'));
+        let input = waybar(&snapshot, Kind::Input);
+        assert_eq!(input["alt"], "muted");
+        assert_eq!(input["text"], "");
+        snapshot.volumes[0] = Some(Volume {
+            percent: 125,
+            muted: false,
+        });
+        assert_eq!(waybar(&snapshot, Kind::Output)["percentage"], 100);
+        assert_eq!(waybar(&snapshot, Kind::Output)["text"], "125%");
+    }
+
+    #[test]
+    fn parses_volume_without_losing_mute_or_amplified_levels() {
+        assert_eq!(
+            parse_volume("Volume: 0.65\n").unwrap(),
+            Volume {
+                percent: 65,
+                muted: false
+            }
+        );
+        assert_eq!(
+            parse_volume("Volume: 1.25 [MUTED]\n").unwrap(),
+            Volume {
+                percent: 125,
+                muted: true
+            }
+        );
+        for invalid in ["", "Volume: NaN", "Volume: inf", "Volume: -1", "error"] {
+            assert!(parse_volume(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn volume_arguments_support_both_defaults_and_bounded_steps() {
+        assert_eq!(Kind::Output.default_id(), "@DEFAULT_AUDIO_SINK@");
+        assert_eq!(Kind::Input.default_id(), "@DEFAULT_AUDIO_SOURCE@");
+        assert_eq!(VolumeChange::Up(5).argument().unwrap(), "5%+");
+        assert_eq!(VolumeChange::Down(5).argument().unwrap(), "5%-");
+        assert_eq!(VolumeChange::Set(0).argument().unwrap(), "0%");
+        assert!(VolumeChange::Set(101).argument().is_err());
+    }
+
+    #[test]
+    fn bluetooth_and_form_factor_are_inherited_from_parent_device() {
+        let mut objects: Value = serde_json::from_str(include_str!("../tests/graph.json")).unwrap();
+        objects[0]["info"]["props"]["device.api"] = json!("bluez5");
+        let mut snapshot = parse_snapshot(&objects.to_string()).unwrap();
+        snapshot.volumes[0] = Some(Volume {
+            percent: 50,
+            muted: true,
+        });
+        let device = snapshot.default_device(Kind::Output).unwrap();
+        assert!(device.bluetooth);
+        assert_eq!(device.form_factor, "headphone");
+        assert_eq!(device.icon(), "audio-headphones-symbolic");
+        let payload = waybar(&snapshot, Kind::Output);
+        assert!(
+            payload["class"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("bluetooth"))
+        );
+        assert!(
+            payload["class"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("muted"))
+        );
+        assert_eq!(payload["alt"], "muted");
     }
 }

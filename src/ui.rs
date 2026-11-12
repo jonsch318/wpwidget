@@ -4,6 +4,7 @@ use gtk::glib::{self, ControlFlow};
 use gtk::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::mpsc::{self, Sender};
 use std::time::{Duration, Instant};
@@ -11,6 +12,8 @@ use std::time::{Duration, Instant};
 enum Request {
     Refresh,
     Select(Device),
+    Volume(Device, u32),
+    Mute(Device),
 }
 
 struct View {
@@ -21,7 +24,92 @@ struct View {
     snapshot: RefCell<Option<Snapshot>>,
     rows: RefCell<Vec<DeviceRow>>,
     switch_started: Cell<Option<Instant>>,
+    controls: [VolumeControl; 2],
+    queue: RefCell<VecDeque<Request>>,
     sender: Sender<Request>,
+}
+
+struct VolumeControl {
+    container: gtk::Box,
+    mute: gtk::Button,
+    scale: gtk::Scale,
+    label: gtk::Label,
+    updating: Cell<bool>,
+    device: RefCell<Option<Device>>,
+}
+
+impl VolumeControl {
+    fn new(kind: Kind) -> Self {
+        let container = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        container.add_css_class("volume-control");
+        let mute = gtk::Button::from_icon_name(match kind {
+            Kind::Output => "audio-volume-high-symbolic",
+            Kind::Input => "audio-input-microphone-symbolic",
+        });
+        mute.add_css_class("mute-button");
+        let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
+        scale.set_draw_value(false);
+        scale.set_hexpand(true);
+        scale.set_tooltip_text(Some(match kind {
+            Kind::Output => "Output volume",
+            Kind::Input => "Microphone volume",
+        }));
+        let label = gtk::Label::new(Some("—"));
+        label.set_width_chars(4);
+        label.set_xalign(1.0);
+        label.add_css_class("volume-value");
+        container.append(&mute);
+        container.append(&scale);
+        container.append(&label);
+        container.set_sensitive(false);
+        Self {
+            container,
+            mute,
+            scale,
+            label,
+            updating: Cell::new(false),
+            device: RefCell::new(None),
+        }
+    }
+
+    fn sync(&self, snapshot: &Snapshot, kind: Kind, pending: bool) {
+        let device = snapshot.default_device(kind);
+        let volume = snapshot.volume(kind);
+        self.container
+            .set_sensitive(device.is_some() && volume.is_some());
+        *self.device.borrow_mut() = device.cloned();
+        if let Some(volume) = volume {
+            let icon = match (kind, volume.muted, volume.percent) {
+                (Kind::Input, true, _) => "microphone-sensitivity-muted-symbolic",
+                (Kind::Input, false, _) => "audio-input-microphone-symbolic",
+                (Kind::Output, true, _) => "audio-volume-muted-symbolic",
+                (Kind::Output, false, 0) => "audio-volume-muted-symbolic",
+                (Kind::Output, false, 1..=33) => "audio-volume-low-symbolic",
+                (Kind::Output, false, 34..=66) => "audio-volume-medium-symbolic",
+                _ => "audio-volume-high-symbolic",
+            };
+            self.mute.set_icon_name(icon);
+            self.mute.set_tooltip_text(Some(match (kind, volume.muted) {
+                (Kind::Output, false) => "Mute output",
+                (Kind::Output, true) => "Unmute output",
+                (Kind::Input, false) => "Mute microphone",
+                (Kind::Input, true) => "Unmute microphone",
+            }));
+            if volume.muted {
+                self.mute.add_css_class("muted");
+            } else {
+                self.mute.remove_css_class("muted");
+            }
+            if !pending {
+                self.updating.set(true);
+                self.scale.set_value(volume.percent.min(100) as f64);
+                self.label.set_text(&format!("{}%", volume.percent));
+                self.updating.set(false);
+            }
+        } else {
+            self.label.set_text("—");
+        }
+    }
 }
 
 struct DeviceRow {
@@ -62,10 +150,54 @@ impl DeviceRow {
 }
 
 impl View {
+    fn connect_controls(self: &Rc<Self>) {
+        for kind in [Kind::Output, Kind::Input] {
+            let weak = Rc::downgrade(self);
+            self.controls[kind.index()]
+                .scale
+                .connect_value_changed(move |scale| {
+                    if let Some(view) = weak.upgrade() {
+                        let control = &view.controls[kind.index()];
+                        if control.updating.get() {
+                            return;
+                        }
+                        let target = control.device.borrow().clone();
+                        if let Some(device) = target {
+                            let percent = scale.value().round() as u32;
+                            control.label.set_text(&format!("{percent}%"));
+                            view.request(Request::Volume(device, percent));
+                        }
+                    }
+                });
+            let weak = Rc::downgrade(self);
+            self.controls[kind.index()].mute.connect_clicked(move |_| {
+                if let Some(view) = weak.upgrade() {
+                    let target = view.controls[kind.index()].device.borrow().clone();
+                    if let Some(device) = target {
+                        view.request(Request::Mute(device));
+                    }
+                }
+            });
+        }
+    }
+
     fn request(&self, request: Request) {
-        if self.busy.replace(true) {
+        if self.busy.get() {
+            if matches!(request, Request::Refresh) {
+                return;
+            }
+            let mut queue = self.queue.borrow_mut();
+            // Dragging can generate many events; only send the latest pending level.
+            if let Request::Volume(target, _) = &request
+                && let Some(queued) = queue.iter_mut().rev().find(|queued| matches!(queued, Request::Volume(device, _) if device.name == target.name && device.kind == target.kind))
+            {
+                *queued = request;
+            } else {
+                queue.push_back(request);
+            }
             return;
         }
+        self.busy.set(true);
         if let Request::Select(target) = &request {
             self.switch_started.set(Some(Instant::now()));
             self.message.set_visible(false);
@@ -95,6 +227,10 @@ impl View {
             }
             Ok(snapshot) => {
                 self.message.set_visible(false);
+                for kind in [Kind::Output, Kind::Input] {
+                    let pending = self.queue.borrow().iter().any(|request| matches!(request, Request::Volume(device, _) if device.kind == kind));
+                    self.controls[kind.index()].sync(&snapshot, kind, pending);
+                }
                 if self
                     .snapshot
                     .borrow()
@@ -114,6 +250,10 @@ impl View {
         }
         for row in self.rows.borrow().iter() {
             row.switching(false);
+        }
+        let next = self.queue.borrow_mut().pop_front();
+        if let Some(next) = next {
+            self.request(next);
         }
     }
 
@@ -140,11 +280,7 @@ impl View {
                 button.add_css_class("selected");
             }
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            let icon = match kind {
-                Kind::Output => "audio-speakers-symbolic",
-                Kind::Input => "audio-input-microphone-symbolic",
-            };
-            let image = gtk::Image::from_icon_name(icon);
+            let image = gtk::Image::from_icon_name(device.icon());
             image.set_pixel_size(20);
             row.append(&image);
             let text = gtk::Box::new(gtk::Orientation::Vertical, 3);
@@ -221,18 +357,19 @@ pub fn run(options: Options) -> Result<(), String> {
     }
 }
 
-fn section(title: &str, icon: &str, parent: &gtk::Box) -> gtk::Box {
+fn section(title: &str, kind: Kind, parent: &gtk::Box) -> (gtk::Box, VolumeControl) {
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 9);
     header.add_css_class("section-heading");
-    header.append(&gtk::Image::from_icon_name(icon));
     let label = gtk::Label::new(Some(title));
     label.set_xalign(0.0);
     header.append(&label);
     parent.append(&header);
+    let control = VolumeControl::new(kind);
+    parent.append(&control.container);
     let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
     list.add_css_class("device-list");
     parent.append(&list);
-    list
+    (list, control)
 }
 
 fn build(app: &gtk::Application, options: &Options) {
@@ -296,8 +433,8 @@ fn build(app: &gtk::Application, options: &Options) {
     root.append(&header);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let output = section("Sound Output", "audio-volume-high-symbolic", &content);
-    let input = section("Sound Input", "audio-input-microphone-symbolic", &content);
+    let (output, output_control) = section("Output", Kind::Output, &content);
+    let (input, input_control) = section("Input", Kind::Input, &content);
     let scroll = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .max_content_height(520)
@@ -338,17 +475,30 @@ fn build(app: &gtk::Application, options: &Options) {
         let mut preview = audio::demo_snapshot();
         for request in requests {
             let result = if demo {
-                if let Request::Select(device) = request {
-                    match device.kind {
+                match request {
+                    Request::Select(device) => match device.kind {
                         Kind::Output => preview.output = Some(device.name),
                         Kind::Input => preview.input = Some(device.name),
+                    },
+                    Request::Volume(device, percent) => {
+                        if let Some(volume) = &mut preview.volumes[device.kind.index()] {
+                            volume.percent = percent;
+                        }
                     }
+                    Request::Mute(device) => {
+                        if let Some(volume) = &mut preview.volumes[device.kind.index()] {
+                            volume.muted = !volume.muted;
+                        }
+                    }
+                    Request::Refresh => {}
                 }
                 Ok(preview.clone())
             } else {
                 match request {
                     Request::Refresh => audio::snapshot(),
                     Request::Select(device) => audio::set_default(&device),
+                    Request::Volume(device, percent) => audio::set_volume(&device, percent),
+                    Request::Mute(device) => audio::toggle_mute(&device),
                 }
             };
             if results.send(result).is_err() {
@@ -364,8 +514,11 @@ fn build(app: &gtk::Application, options: &Options) {
         snapshot: RefCell::new(None),
         rows: RefCell::new(Vec::new()),
         switch_started: Cell::new(None),
+        controls: [output_control, input_control],
+        queue: RefCell::new(VecDeque::new()),
         sender,
     });
+    view.connect_controls();
     view.request(Request::Refresh);
     let weak_window = window.downgrade();
     let weak_view = Rc::downgrade(&view);
@@ -425,10 +578,22 @@ mod tests {
             snapshot: RefCell::new(None),
             rows: RefCell::new(Vec::new()),
             switch_started: Cell::new(None),
+            controls: [
+                VolumeControl::new(Kind::Output),
+                VolumeControl::new(Kind::Input),
+            ],
+            queue: RefCell::new(VecDeque::new()),
             sender,
         });
+        view.connect_controls();
         let snapshot = audio::demo_snapshot();
         view.update(Ok(snapshot.clone()));
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        assert_eq!(view.controls[0].scale.value(), 65.0);
+        assert_eq!(view.controls[1].scale.value(), 80.0);
         let original_row = view.output.first_child().unwrap();
         view.request(Request::Refresh);
         assert!(matches!(requests.try_recv(), Ok(Request::Refresh)));
@@ -437,18 +602,53 @@ mod tests {
         view.update(Ok(snapshot.clone()));
         assert_eq!(view.output.first_child().unwrap(), original_row);
         view.request(Request::Select(snapshot.devices[0].clone()));
+        assert!(matches!(requests.try_recv(), Ok(Request::Select(_))));
         assert!(view.output.is_sensitive());
         assert!(view.input.is_sensitive());
         assert!(view.rows.borrow()[0].spinner.is_spinning());
         assert!(!view.rows.borrow()[1].spinner.is_spinning());
         let mut after = snapshot;
         after.output = Some(after.devices[0].name.clone());
-        view.update(Ok(after));
+        view.update(Ok(after.clone()));
         assert_eq!(view.output.first_child().unwrap(), original_row);
         assert!(view.rows.borrow()[0].button.has_css_class("selected"));
         assert!(!view.rows.borrow()[1].button.has_css_class("selected"));
         assert!(!view.rows.borrow()[0].spinner.is_spinning());
         assert!(view.output.is_sensitive());
         assert!(view.input.is_sensitive());
+
+        // Slider callbacks target the correct device and coalesce rapid dragging.
+        view.controls[0].scale.set_value(30.0);
+        assert!(
+            matches!(requests.try_recv(), Ok(Request::Volume(device, 30)) if device.kind == Kind::Output)
+        );
+        view.controls[0].scale.set_value(35.0);
+        view.controls[0].scale.set_value(40.0);
+        assert_eq!(view.queue.borrow().len(), 1);
+        after.volumes[0].as_mut().unwrap().percent = 30;
+        view.update(Ok(after.clone()));
+        assert_eq!(view.controls[0].scale.value(), 40.0);
+        assert!(matches!(requests.try_recv(), Ok(Request::Volume(_, 40))));
+        after.volumes[0].as_mut().unwrap().percent = 40;
+        view.update(Ok(after.clone()));
+        assert_eq!(view.controls[1].scale.value(), 80.0);
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+
+        view.controls[1].mute.emit_clicked();
+        assert!(
+            matches!(requests.try_recv(), Ok(Request::Mute(device)) if device.kind == Kind::Input)
+        );
+        after.volumes[1].as_mut().unwrap().muted = true;
+        view.update(Ok(after));
+        assert!(view.controls[1].mute.has_css_class("muted"));
+        assert!(!view.controls[0].mute.has_css_class("muted"));
+        assert_eq!(view.controls[1].scale.value(), 80.0);
+        assert!(matches!(
+            requests.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
     }
 }

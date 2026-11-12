@@ -1,0 +1,21 @@
+// Optional separate microphone module; add "custom/audio-input" to a module list.
+{
+  "custom/audio-input": {
+    "exec": "$HOME/.local/bin/wireplumber-widget status --kind input",
+    "return-type": "json",
+    "escape": true,
+    "interval": 1,
+    "format": "{icon}  {text}",
+    "format-icons": {
+      "muted": "",
+      "unavailable": "",
+      "default": ""
+    },
+    "on-click": "$HOME/.local/bin/wireplumber-widget popup",
+    "on-click-right": "$HOME/.local/bin/wireplumber-widget mute --kind input",
+    "on-scroll-up": "$HOME/.local/bin/wireplumber-widget volume up --kind input --step 5",
+    "on-scroll-down": "$HOME/.local/bin/wireplumber-widget volume down --kind input --step 5",
+    "smooth-scrolling-threshold": 1,
+    "exec-on-event": false
+  }
+}
