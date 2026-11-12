@@ -1,0 +1,13 @@
+[
+  {"id":42,"type":"PipeWire:Interface:Node","info":{"props":{"media.class":"Audio/Sink","node.name":"usb-dac","node.description":"Headphones & DAC <USB>"}}},
+  {"id":43,"type":"PipeWire:Interface:Node","info":{"props":{"media.class":"Audio/Sink","node.name":"speakers","node.nick":"Speakers"}}},
+  {"id":51,"type":"PipeWire:Interface:Node","info":{"props":{"media.class":"Audio/Source","node.name":"usb-mic","node.description":"Microphone"}}},
+  {"id":70,"type":"PipeWire:Interface:Node","info":{"props":{"media.class":"Stream/Output/Audio","node.name":"browser"}}},
+  {"id":71,"type":"PipeWire:Interface:Node","info":{"props":{"media.class":"Video/Source","node.name":"camera"}}},
+  {"id":9,"type":"PipeWire:Interface:Metadata","props":{"metadata.name":"default"},"metadata":[
+    {"subject":0,"key":"default.configured.audio.sink","value":{"name":"old-device"}},
+    {"subject":0,"key":"default.audio.sink","value":{"name":"usb-dac"}},
+    {"subject":0,"key":"default.audio.source","value":"{\"name\":\"usb-mic\"}"},
+    {"subject":42,"key":"default.audio.sink","value":{"name":"speakers"}}
+  ]}
+]

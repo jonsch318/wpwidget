@@ -1,0 +1,11 @@
+/* Append to ~/.config/waybar/style.css. Popup styling is embedded in the binary. */
+#custom-audio-devices {
+    background: #353539;
+    color: #fafafa;
+    border-radius: 16px;
+    padding: 0 12px;
+    margin: 4px;
+}
+#custom-audio-devices:hover { background: #46464c; }
+#custom-audio-devices.error,
+#custom-audio-devices.disconnected { color: #f8c784; }

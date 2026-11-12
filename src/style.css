@@ -1,0 +1,56 @@
+window.audio-popup {
+    background: transparent;
+    color: #fafafa;
+    font-family: "Adwaita Sans", "Cantarell", sans-serif;
+    font-size: 14px;
+}
+.audio-popup .panel {
+    background: #28282c;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 24px;
+    padding: 18px;
+}
+.audio-popup .panel-heading { margin-bottom: 10px; }
+.audio-popup .title { font-size: 22px; font-weight: 800; }
+.audio-popup .close {
+    background: #414145;
+    color: #eeeeef;
+    border-radius: 99px;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 2px;
+    border: none;
+    box-shadow: none;
+}
+.audio-popup .close:hover { background: #505055; }
+.audio-popup .section-heading {
+    color: #d6d6dc;
+    font-size: 13px;
+    font-weight: 700;
+    margin: 14px 4px 10px;
+}
+.audio-popup .device-list {
+    background: #353539;
+    border-radius: 16px;
+    padding: 5px;
+}
+.audio-popup button.device {
+    background: transparent;
+    color: #fafafa;
+    border: 2px solid transparent;
+    box-shadow: none;
+    border-radius: 12px;
+    padding: 12px 10px;
+    font-weight: 600;
+    transition: background-color 180ms ease-in-out, border-color 180ms ease-in-out;
+}
+.audio-popup button.device:hover { background: #46464c; }
+.audio-popup button.device.selected { background: #3584e4; color: white; }
+.audio-popup button.device.selected:hover { background: #4994ed; }
+.audio-popup button.device.switching { background: #3e5068; }
+.audio-popup button.device.switching.selected { background: #3584e4; }
+.audio-popup button.device:focus-visible { border-color: #99c1f1; }
+.audio-popup .device-subtitle { font-size: 11px; font-weight: 400; opacity: 0.7; }
+.audio-popup .empty-state { padding: 20px 12px; opacity: 0.65; }
+.audio-popup .message { color: #f8c784; margin: 14px 4px 0; font-size: 12px; }
+.audio-popup .footer { color: #aaaab4; margin-top: 18px; font-size: 11px; }

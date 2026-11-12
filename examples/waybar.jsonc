@@ -1,0 +1,15 @@
+// Merge this module into ~/.config/waybar/config.jsonc and add
+// "custom/audio-devices" to your existing modules-right (or another module list).
+{
+  "modules-right": ["custom/audio-devices"],
+  "custom/audio-devices": {
+    "exec": "$HOME/.local/bin/wireplumber-widget status",
+    "return-type": "json",
+    "escape": true,
+    "interval": 3,
+    "format": "{}",
+    "tooltip": true,
+    "on-click": "$HOME/.local/bin/wireplumber-widget popup",
+    "exec-on-event": false
+  }
+}
