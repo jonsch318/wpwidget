@@ -16,29 +16,31 @@ So i asked the nice little daemon in my computer to build a small gtk widget to 
 
 On Arch Linux, install `gtk4 gtk4-layer-shell pipewire wireplumber waybar
 adwaita-icon-theme`. Prebuilt binaries do not require Rust or development tools;
-see [GitHub Actions builds](#github-actions-builds) for artifact compatibility.
+see [GitHub releases](#github-releases) for artifact compatibility.
 
-AI Giberish:
-
+# And now the AI Giberish:
 
 A GNOME-style GTK4 audio menu for Waybar, with separate output and input device
 lists, volume sliders, and mute buttons. Selected devices are highlighted;
 switching shows a spinner. Device lists and levels refresh automatically.
 
-## GitHub Actions builds
+## GitHub releases
 
-1. Open the repository's **Actions → Build** and choose a successful run.
-2. Download `wpwidget-linux-x86_64` under **Artifacts** and unzip it.
-3. Extract and install the included binary:
+Open the repository's **Releases** page, choose the latest stable version, and
+expand **Assets**. Download `wpwidget-linux-x86_64.tar.gz` and its `.sha256` file.
+From the download directory, verify, extract, and install:
 
 ```sh
+sha256sum --check wpwidget-linux-x86_64.tar.gz.sha256
 tar -xzf wpwidget-linux-x86_64.tar.gz
 install -Dm755 wpwidget ~/.local/bin/wpwidget
 ```
 
-The archive includes Waybar examples and a README; a SHA-256 checksum accompanies
-it. The binary requires the runtime dependencies above and glibc 2.39 or newer
-(Ubuntu 24.04 compatible). Rust is only needed when building from source.
+The archive contains the Linux x86_64 executable, Waybar configuration examples,
+and this README. Install the runtime dependencies above; the prebuilt binary
+also requires glibc 2.39 or newer (Ubuntu 24.04 compatible). Rust is not needed.
+Continue with [Waybar setup](#waybar-setup) below. To update, repeat these steps
+with a newer release, then close and reopen the menu and restart Waybar.
 
 ## Build Requirements
 
@@ -116,8 +118,8 @@ cargo test -- --ignored --test-threads=1 # GTK test; requires a display
 ```
 
 Rebuild after editing the embedded popup stylesheet, `src/style.css`.
-[CI](.github/workflows/build.yml) runs all checks, including GTK tests under Xvfb,
-and uploads an optimized binary on pushes, pull requests, and manual dispatches.
+[CI](.github/workflows/build.yml) runs formatting, lint, and test checks, including
+GTK tests under Xvfb.
 
 ## Troubleshooting
 
