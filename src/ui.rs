@@ -16,6 +16,11 @@ enum Request {
     Mute(Device),
 }
 
+struct Switch {
+    target: Device,
+    started: Instant,
+}
+
 struct View {
     output: gtk::Box,
     input: gtk::Box,
@@ -23,7 +28,7 @@ struct View {
     busy: Cell<bool>,
     snapshot: RefCell<Option<Snapshot>>,
     rows: RefCell<Vec<DeviceRow>>,
-    switch_started: Cell<Option<Instant>>,
+    switching: RefCell<Option<Switch>>,
     controls: [VolumeControl; 2],
     queue: RefCell<VecDeque<Request>>,
     sender: Sender<Request>,
@@ -48,6 +53,12 @@ impl VolumeControl {
         });
         mute.add_css_class("mute-button");
         let scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
+        // Let wheel and touchpad scroll events reach the surrounding ScrolledWindow.
+        for controller in scale.observe_controllers().snapshot() {
+            if let Ok(scroll) = controller.downcast::<gtk::EventControllerScroll>() {
+                scroll.set_propagation_phase(gtk::PropagationPhase::None);
+            }
+        }
         scale.set_draw_value(false);
         scale.set_hexpand(true);
         scale.set_tooltip_text(Some(match kind {
@@ -199,7 +210,10 @@ impl View {
         }
         self.busy.set(true);
         if let Request::Select(target) = &request {
-            self.switch_started.set(Some(Instant::now()));
+            self.switching.replace(Some(Switch {
+                target: target.clone(),
+                started: Instant::now(),
+            }));
             self.message.set_visible(false);
             for row in self.rows.borrow().iter() {
                 row.switching(row.device.name == target.name && row.device.kind == target.kind);
@@ -207,7 +221,7 @@ impl View {
         }
         if self.sender.send(request).is_err() {
             self.busy.set(false);
-            self.switch_started.set(None);
+            self.switching.take();
             for row in self.rows.borrow().iter() {
                 row.switching(false);
             }
@@ -217,15 +231,27 @@ impl View {
         }
     }
 
-    fn update(self: &Rc<Self>, result: Result<Snapshot, String>) {
+    fn update(self: &Rc<Self>, result: Result<Snapshot, String>) -> bool {
         self.busy.set(false);
-        self.switch_started.set(None);
+        let switching = self.switching.take();
+        let mut output_changed = false;
         match result {
             Err(error) => {
                 self.message.set_text(&error);
                 self.message.set_visible(true);
             }
             Ok(snapshot) => {
+                if let Some(switch) = switching
+                    && switch.target.kind == Kind::Output
+                {
+                    let target = Some(switch.target.name.as_str());
+                    output_changed = snapshot.output.as_deref() == target
+                        && self
+                            .snapshot
+                            .borrow()
+                            .as_ref()
+                            .is_some_and(|previous| previous.output.as_deref() != target);
+                }
                 self.message.set_visible(false);
                 for kind in [Kind::Output, Kind::Input] {
                     let pending = self.queue.borrow().iter().any(|request| matches!(request, Request::Volume(device, _) if device.kind == kind));
@@ -255,6 +281,7 @@ impl View {
         if let Some(next) = next {
             self.request(next);
         }
+        output_changed
     }
 
     fn populate(self: &Rc<Self>, container: &gtk::Box, kind: Kind, snapshot: &Snapshot) {
@@ -389,26 +416,35 @@ fn build(app: &gtk::Application, options: &Options) {
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
 
-    if gtk4_layer_shell::is_supported() {
+    let layer_shell = gtk4_layer_shell::is_supported();
+    let vertical = if options.position.starts_with("top") {
+        Edge::Top
+    } else {
+        Edge::Bottom
+    };
+    let horizontal = if options.position.ends_with("right") {
+        Edge::Right
+    } else {
+        Edge::Left
+    };
+    if layer_shell {
         window.init_layer_shell();
         window.set_namespace(Some("wpwidget"));
         window.set_layer(Layer::Overlay);
         window.set_keyboard_mode(KeyboardMode::OnDemand);
         window.set_exclusive_zone(0);
-        let vertical = if options.position.starts_with("top") {
-            Edge::Top
+        if options.close_on_outside_click {
+            // Let the compositor size the window to the usable output area.
+            window.set_resizable(true);
+            for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
+                window.set_anchor(edge, true);
+            }
         } else {
-            Edge::Bottom
-        };
-        let horizontal = if options.position.ends_with("right") {
-            Edge::Right
-        } else {
-            Edge::Left
-        };
-        window.set_anchor(vertical, true);
-        window.set_anchor(horizontal, true);
-        window.set_margin(vertical, options.margin);
-        window.set_margin(horizontal, options.margin);
+            window.set_anchor(vertical, true);
+            window.set_anchor(horizontal, true);
+            window.set_margin(vertical, options.margin);
+            window.set_margin(horizontal, options.margin);
+        }
     }
 
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -452,7 +488,49 @@ fn build(app: &gtk::Application, options: &Options) {
         footer.add_css_class("footer");
         root.append(&footer);
     }
-    window.set_child(Some(&root));
+    if options.close_on_outside_click && layer_shell {
+        // Layer surfaces only receive clicks inside their own input region.
+        // Fill the usable output area with a transparent click target behind the panel.
+        let backdrop = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let click = gtk::GestureClick::builder().button(0).build();
+        let weak_window = window.downgrade();
+        click.connect_pressed(move |_, _, _, _| {
+            if let Some(window) = weak_window.upgrade() {
+                window.close();
+            }
+        });
+        backdrop.add_controller(click);
+
+        let overlay = gtk::Overlay::new();
+        overlay.set_child(Some(&backdrop));
+        overlay.add_overlay(&root);
+        overlay.set_measure_overlay(&root, true);
+        root.set_width_request(window.default_width());
+        if vertical == Edge::Top {
+            root.set_valign(gtk::Align::Start);
+            root.set_margin_top(options.margin);
+        } else {
+            root.set_valign(gtk::Align::End);
+            root.set_margin_bottom(options.margin);
+        }
+        if horizontal == Edge::Left {
+            root.set_halign(gtk::Align::Start);
+            root.set_margin_start(options.margin);
+        } else {
+            root.set_halign(gtk::Align::End);
+            root.set_margin_end(options.margin);
+        }
+        window.set_child(Some(&overlay));
+    } else {
+        window.set_child(Some(&root));
+        if options.close_on_outside_click {
+            window.connect_is_active_notify(|window| {
+                if window.is_mapped() && !window.is_active() {
+                    window.close();
+                }
+            });
+        }
+    }
 
     let keys = gtk::EventControllerKey::new();
     let weak_window = window.downgrade();
@@ -513,7 +591,7 @@ fn build(app: &gtk::Application, options: &Options) {
         busy: Cell::new(false),
         snapshot: RefCell::new(None),
         rows: RefCell::new(Vec::new()),
-        switch_started: Cell::new(None),
+        switching: RefCell::new(None),
         controls: [output_control, input_control],
         queue: RefCell::new(VecDeque::new()),
         sender,
@@ -531,24 +609,33 @@ fn build(app: &gtk::Application, options: &Options) {
         }
     }));
     let mut completed = None;
+    let close_on_output_switch = options.close_on_output_switch;
+    let mut close_when_idle = false;
     glib::timeout_add_local(Duration::from_millis(16), move || {
-        if weak_window.upgrade().is_none() {
+        let Some(window) = weak_window.upgrade() else {
             if let Some(refresh) = refresh.take() {
                 refresh.remove();
             }
             return ControlFlow::Break;
-        }
+        };
         if let Ok(result) = receiver.try_recv() {
             completed = Some(result);
         }
         // Keep a fast successful switch visible long enough for a short animation.
-        if view
-            .switch_started
-            .get()
-            .is_none_or(|start| start.elapsed() >= Duration::from_millis(250))
-            && let Some(result) = completed.take()
-        {
-            view.update(result);
+        let switch_animation_finished = view
+            .switching
+            .borrow()
+            .as_ref()
+            .is_none_or(|switch| switch.started.elapsed() >= Duration::from_millis(250));
+        if switch_animation_finished && let Some(result) = completed.take() {
+            let success = result.is_ok();
+            let output_changed = view.update(result);
+            // Finish any queued changes before closing. Keep errors visible.
+            close_when_idle =
+                close_on_output_switch && success && (close_when_idle || output_changed);
+            if close_when_idle && !view.busy.get() && !view.message.is_visible() {
+                window.close();
+            }
         }
         ControlFlow::Continue
     });
@@ -577,7 +664,7 @@ mod tests {
             busy: Cell::new(false),
             snapshot: RefCell::new(None),
             rows: RefCell::new(Vec::new()),
-            switch_started: Cell::new(None),
+            switching: RefCell::new(None),
             controls: [
                 VolumeControl::new(Kind::Output),
                 VolumeControl::new(Kind::Input),
@@ -587,19 +674,26 @@ mod tests {
         });
         view.connect_controls();
         let snapshot = audio::demo_snapshot();
-        view.update(Ok(snapshot.clone()));
+        assert!(!view.update(Ok(snapshot.clone())));
         assert!(matches!(
             requests.try_recv(),
             Err(mpsc::TryRecvError::Empty)
         ));
         assert_eq!(view.controls[0].scale.value(), 65.0);
         assert_eq!(view.controls[1].scale.value(), 80.0);
+        for control in &view.controls {
+            for controller in control.scale.observe_controllers().snapshot() {
+                if let Ok(scroll) = controller.downcast::<gtk::EventControllerScroll>() {
+                    assert_eq!(scroll.propagation_phase(), gtk::PropagationPhase::None);
+                }
+            }
+        }
         let original_row = view.output.first_child().unwrap();
         view.request(Request::Refresh);
         assert!(matches!(requests.try_recv(), Ok(Request::Refresh)));
         assert!(view.output.is_sensitive());
         assert!(view.input.is_sensitive());
-        view.update(Ok(snapshot.clone()));
+        assert!(!view.update(Ok(snapshot.clone())));
         assert_eq!(view.output.first_child().unwrap(), original_row);
         view.request(Request::Select(snapshot.devices[0].clone()));
         assert!(matches!(requests.try_recv(), Ok(Request::Select(_))));
@@ -609,7 +703,7 @@ mod tests {
         assert!(!view.rows.borrow()[1].spinner.is_spinning());
         let mut after = snapshot;
         after.output = Some(after.devices[0].name.clone());
-        view.update(Ok(after.clone()));
+        assert!(view.update(Ok(after.clone())));
         assert_eq!(view.output.first_child().unwrap(), original_row);
         assert!(view.rows.borrow()[0].button.has_css_class("selected"));
         assert!(!view.rows.borrow()[1].button.has_css_class("selected"));
@@ -636,6 +730,25 @@ mod tests {
             requests.try_recv(),
             Err(mpsc::TryRecvError::Empty)
         ));
+
+        view.request(Request::Select(after.devices[0].clone()));
+        assert!(matches!(requests.try_recv(), Ok(Request::Select(_))));
+        assert!(!view.update(Ok(after.clone())));
+
+        view.request(Request::Select(after.devices[1].clone()));
+        assert!(matches!(requests.try_recv(), Ok(Request::Select(_))));
+        assert!(!view.update(Err("Device unavailable".into())));
+        assert!(view.message.is_visible());
+
+        view.request(Request::Select(after.devices[4].clone()));
+        assert!(matches!(requests.try_recv(), Ok(Request::Select(_))));
+        after.input = Some(after.devices[4].name.clone());
+        assert!(!view.update(Ok(after.clone())));
+
+        view.request(Request::Refresh);
+        assert!(matches!(requests.try_recv(), Ok(Request::Refresh)));
+        after.output = Some(after.devices[1].name.clone());
+        assert!(!view.update(Ok(after.clone())));
 
         view.controls[1].mute.emit_clicked();
         assert!(

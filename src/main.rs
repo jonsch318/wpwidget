@@ -9,6 +9,8 @@ pub struct Options {
     pub demo: bool,
     pub position: String,
     pub margin: i32,
+    pub close_on_outside_click: bool,
+    pub close_on_output_switch: bool,
 }
 
 fn main() -> ExitCode {
@@ -26,6 +28,8 @@ fn run() -> Result<(), String> {
         demo: false,
         position: "top-right".into(),
         margin: 12,
+        close_on_outside_click: true,
+        close_on_output_switch: true,
     };
     let mut status = false;
     let mut mute = false;
@@ -62,6 +66,8 @@ fn run() -> Result<(), String> {
                 }
             }
             "--demo" => options.demo = true,
+            "--no-close-on-outside-click" => options.close_on_outside_click = false,
+            "--no-close-on-output-switch" => options.close_on_output_switch = false,
             "--position" => {
                 options.position = args.next().ok_or("--position requires a corner")?;
                 if !["top-right", "top-left", "bottom-right", "bottom-left"]
@@ -94,6 +100,8 @@ fn run() -> Result<(), String> {
                     --demo     Use sample devices without changing system audio\n\
                     --position CORNER  top-right (default), top-left, bottom-right, bottom-left\n\
                     --margin PIXELS    Distance from the bar and screen edge (default: 12)\n\
+                    --no-close-on-outside-click  Keep the menu open when clicking outside it\n\
+                    --no-close-on-output-switch  Keep the menu open after switching outputs\n\
                     -h, --help         Show this help"
                 );
                 return Ok(());

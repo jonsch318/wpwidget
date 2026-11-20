@@ -85,7 +85,8 @@ install -Dm755 target/release/wpwidget ~/.local/bin/wpwidget
 | Scroll up/down | Output volume ±5% |
 
 Each menu section has a 0–100% slider; click its icon to mute/unmute. Moving a
-slider preserves mute. Escape or the close button also closes the menu.
+slider preserves mute. Wheel and touchpad scrolling move the menu even when the
+pointer is over a slider. Escape or the close button also closes the menu.
 
 The example keeps the existing device and volume `format-icons`, plus `muted`
 and `unavailable`. Custom modules use `{icon}` and `{text}` instead of `{volume}`,
@@ -107,6 +108,27 @@ $HOME/.local/bin/wpwidget popup --position bottom-right --margin 12
 
 Supported corners: `top-right`, `top-left`, `bottom-right`, `bottom-left`.
 Positioning requires layer-shell; other desktops open a normal window.
+
+### Auto-close
+
+The menu closes when you click outside it or successfully switch to a different
+output. Add either flag to the Waybar `on-click` command to disable that behavior.
+
+| Flag | Effect |
+| --- | --- |
+| `--no-close-on-outside-click` | Keep the menu open when clicking outside it |
+| `--no-close-on-output-switch` | Keep the menu open after switching outputs |
+
+For example, this keeps the menu open after an output switch while still allowing
+outside clicks to dismiss it.
+
+```sh
+$HOME/.local/bin/wpwidget popup --no-close-on-output-switch
+```
+
+Under layer-shell, a click in the usable area of the menu's monitor dismisses
+the menu and is consumed. A bar that reserves screen space remains clickable.
+On other desktops, outside-click dismissal follows window focus.
 
 ## Development
 
